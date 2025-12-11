@@ -1,0 +1,11 @@
+PROJECT_NAME           = "KnapsackC"
+OUTPUT_DIRECTORY       = docs/build
+INPUT                  = include src
+RECURSIVE              = YES
+GENERATE_LATEX         = NO
+QUIET                  = YES
+WARN_IF_UNDOCUMENTED   = YES
+EXTRACT_ALL            = YES
+OPTIMIZE_OUTPUT_FOR_C  = YES
+FILE_PATTERNS          = *.h *.c
+STRIP_FROM_PATH        = @CMAKE_SOURCE_DIR@
