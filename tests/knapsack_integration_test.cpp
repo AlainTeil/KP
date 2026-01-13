@@ -67,6 +67,21 @@ TEST(KnapsackIntegrationTest, RunsDemoAndPrintsSelection) {
   EXPECT_NE(result.output.find("Selected indices (3): 0 1 3"), std::string::npos);
 }
 
+TEST(KnapsackIntegrationTest, JsonModePrintsMachineReadableOutput) {
+  const std::string input = "10\n2:3 3:4 4:5 5:6\n";
+  const std::string path = write_temp_file(input);
+
+  const std::string command = std::string(KNAPSACK_DEMO_PATH) + " --json " + path;
+  CommandResult result = run_command(command);
+
+  std::filesystem::remove(path);
+
+  EXPECT_EQ(result.exit_code, 0);
+  EXPECT_NE(result.output.find("\"status\":\"ok\""), std::string::npos);
+  EXPECT_NE(result.output.find("\"optimal_value\":13"), std::string::npos);
+  EXPECT_NE(result.output.find("\"selected_indices\":[0,1,3]"), std::string::npos);
+}
+
 TEST(KnapsackIntegrationTest, FailsGracefullyOnBadInput) {
   const std::string input = "abc\n1:2\n"; // bad capacity
   const std::string path = write_temp_file(input);

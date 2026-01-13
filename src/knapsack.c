@@ -1,79 +1,13 @@
 #include "knapsack/knapsack.h"
 
 #include <limits.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 
-static bool validate_items(const knapsack_item_t *items, size_t count) {
-  if (!items || count == 0U) {
-    return false;
-  }
-  for (size_t i = 0; i < count; ++i) {
-    if (items[i].weight < 0) {
-      return false;
-    }
-  }
-  return true;
-}
-
-static bool validate_capacity(int capacity) { return capacity >= 0; }
-
-static bool validate_dimensions(size_t count, size_t width, size_t *take_size_out) {
-  if (!take_size_out) {
-    return false;
-  }
-  if (width == 0U) {
-    return false;
-  }
-  if (count != 0U && width > SIZE_MAX / count) {
-    return false;
-  }
-  const size_t take_size = count * width;
-  if (take_size == 0U) {
-    return false;
-  }
-  *take_size_out = take_size;
-  return true;
-}
-
-typedef struct {
-  size_t width;
-  size_t take_size;
-  int *prev;
-  int *curr;
-  unsigned char *take;
-} knapsack_workspace_t;
-
-static bool allocate_workspace(knapsack_workspace_t *workspace) {
-  if (!workspace) {
-    return false;
-  }
-  workspace->prev = (int *)calloc(workspace->width, sizeof(int));
-  workspace->curr = (int *)calloc(workspace->width, sizeof(int));
-  workspace->take = (unsigned char *)calloc(workspace->take_size, sizeof(unsigned char));
-  if (!workspace->prev || !workspace->curr || !workspace->take) {
-    free(workspace->prev);
-    free(workspace->curr);
-    free(workspace->take);
-    workspace->prev = NULL;
-    workspace->curr = NULL;
-    workspace->take = NULL;
-    return false;
-  }
-  return true;
-}
-
-static void free_workspace(knapsack_workspace_t *workspace) {
-  if (!workspace) {
-    return;
-  }
-  free(workspace->prev);
-  free(workspace->curr);
-  free(workspace->take);
-  workspace->prev = NULL;
-  workspace->curr = NULL;
-  workspace->take = NULL;
-}
+static const size_t KNAPSACK_MAX_ITEMS = 100U;
+static const int KNAPSACK_MAX_CAPACITY = 100000;
 
 static void reset_result(knapsack_result_t *result) {
   if (!result) {
@@ -84,17 +18,27 @@ static void reset_result(knapsack_result_t *result) {
   result->selected_indices = NULL;
 }
 
-static void copy_row(size_t width, int *dest, const int *src) {
-  for (size_t col = 0; col < width; ++col) {
-    dest[col] = src[col];
+// NOLINTNEXTLINE(bugprone-easily-swappable-parameters)
+static knapsack_status_t validate_inputs(const knapsack_item_t *items, size_t count,
+                                         int capacity) {
+  if (!items || count == 0U) {
+    return KNAPSACK_ERR_INVALID_ITEMS;
   }
+  if (count > KNAPSACK_MAX_ITEMS) {
+    return KNAPSACK_ERR_TOO_MANY_ITEMS;
+  }
+  if (capacity < 0 || capacity > KNAPSACK_MAX_CAPACITY) {
+    return KNAPSACK_ERR_INVALID_CAPACITY;
+  }
+  for (size_t i = 0; i < count; ++i) {
+    if (items[i].weight <= 0 || items[i].value < 0) {
+      return KNAPSACK_ERR_INVALID_ITEMS;
+    }
+  }
+  return KNAPSACK_OK;
 }
 
-/* Returns false if the addition would overflow an int. */
 static bool add_int_no_overflow(int lhs, int rhs, int *out) {
-  if (!out) {
-    return false;
-  }
   const long long sum = (long long)lhs + (long long)rhs;
   if (sum > INT_MAX || sum < INT_MIN) {
     return false;
@@ -103,60 +47,135 @@ static bool add_int_no_overflow(int lhs, int rhs, int *out) {
   return true;
 }
 
-/*
- * Fills the DP table row by row. Workspace buffers (`prev`, `curr`, `take`) are
- * owned by the caller and reused in-place. Complexity: O(count * width).
- * Returns false if any intermediate sum would overflow an int.
- */
-static bool run_dp(const knapsack_item_t *items, size_t count, knapsack_workspace_t *workspace,
-                   int **last_row_out) {
-  if (!workspace || !last_row_out) {
+typedef struct {
+  size_t width;
+  size_t take_size;
+  int *prev_value;
+  int *curr_value;
+  size_t *prev_weight;
+  size_t *curr_weight;
+  unsigned char *take;
+} knapsack_workspace_t;
+
+static bool allocate_workspace(knapsack_workspace_t *workspace) {
+  workspace->prev_value = (int *)calloc(workspace->width, sizeof(int));
+  workspace->curr_value = (int *)calloc(workspace->width, sizeof(int));
+  workspace->prev_weight = (size_t *)calloc(workspace->width, sizeof(size_t));
+  workspace->curr_weight = (size_t *)calloc(workspace->width, sizeof(size_t));
+  workspace->take = (unsigned char *)calloc(workspace->take_size, sizeof(unsigned char));
+
+  if (!workspace->prev_value || !workspace->curr_value || !workspace->prev_weight ||
+      !workspace->curr_weight || !workspace->take) {
+    free(workspace->prev_value);
+    free(workspace->curr_value);
+    free(workspace->prev_weight);
+    free(workspace->curr_weight);
+    free(workspace->take);
+    workspace->prev_value = NULL;
+    workspace->curr_value = NULL;
+    workspace->prev_weight = NULL;
+    workspace->curr_weight = NULL;
+    workspace->take = NULL;
     return false;
   }
-  *last_row_out = NULL;
 
-  int *local_prev = workspace->prev;
-  int *local_curr = workspace->curr;
-  const size_t width = workspace->width;
-
-  for (size_t i = 0; i < count; ++i) {
-    copy_row(width, local_curr, local_prev);
-    const int item_weight = items[i].weight;
-    const int item_value = items[i].value;
-    for (size_t cap = (size_t)item_weight; cap < width; ++cap) {
-      int candidate = 0;
-      if (!add_int_no_overflow(local_prev[cap - (size_t)item_weight], item_value, &candidate)) {
-        return false;
-      }
-      if (candidate > local_curr[cap]) {
-        local_curr[cap] = candidate;
-        workspace->take[i * width + cap] = 1U;
-      }
-    }
-    int *tmp = local_prev;
-    local_prev = local_curr;
-    local_curr = tmp;
-  }
-
-  *last_row_out = local_prev;
   return true;
 }
 
-/*
- * Reconstructs the chosen items from the take matrix into out_result. Ownership of
- * workspace buffers remains with the caller; out_result allocates selected_indices.
- */
-static bool reconstruct_solution(const knapsack_item_t *items, size_t count,
-                                 const knapsack_workspace_t *workspace, const int *last_row,
-                                 knapsack_result_t *out_result) {
-  if (!workspace || !last_row || !out_result) {
-    return false;
+static void free_workspace(knapsack_workspace_t *workspace) {
+  if (!workspace) {
+    return;
+  }
+  free(workspace->prev_value);
+  free(workspace->curr_value);
+  free(workspace->prev_weight);
+  free(workspace->curr_weight);
+  free(workspace->take);
+  workspace->prev_value = NULL;
+  workspace->curr_value = NULL;
+  workspace->prev_weight = NULL;
+  workspace->curr_weight = NULL;
+  workspace->take = NULL;
+}
+
+static void copy_row(size_t width, int *dest_value, const int *src_value, size_t *dest_weight,
+                     const size_t *src_weight) {
+  for (size_t col = 0; col < width; ++col) {
+    dest_value[col] = src_value[col];
+    dest_weight[col] = src_weight[col];
+  }
+}
+
+static bool run_dp(const knapsack_item_t *items, size_t count, knapsack_workspace_t *workspace) {
+  const size_t width = workspace->width;
+
+  for (size_t i = 0; i < count; ++i) {
+    copy_row(width, workspace->curr_value, workspace->prev_value, workspace->curr_weight,
+             workspace->prev_weight);
+
+    const int item_weight = items[i].weight;
+    const int item_value = items[i].value;
+    for (size_t cap = (size_t)item_weight; cap < width; ++cap) {
+      int candidate_val = 0;
+      if (!add_int_no_overflow(workspace->prev_value[cap - (size_t)item_weight], item_value,
+                               &candidate_val)) {
+        return false;
+      }
+      const size_t candidate_weight =
+          workspace->prev_weight[cap - (size_t)item_weight] + (size_t)item_weight;
+      const int current_val = workspace->curr_value[cap];
+      const size_t current_weight = workspace->curr_weight[cap];
+
+      if (candidate_val > current_val ||
+          (candidate_val == current_val && candidate_weight < current_weight)) {
+        workspace->curr_value[cap] = candidate_val;
+        workspace->curr_weight[cap] = candidate_weight;
+        workspace->take[i * width + cap] = 1U;
+      }
+    }
+
+    int *tmp_value = workspace->prev_value;
+    workspace->prev_value = workspace->curr_value;
+    workspace->curr_value = tmp_value;
+
+    size_t *tmp_weight = workspace->prev_weight;
+    workspace->prev_weight = workspace->curr_weight;
+    workspace->curr_weight = tmp_weight;
   }
 
-  out_result->optimal_value = last_row[workspace->width - 1U];
+  return true;
+}
 
-  size_t cap = workspace->width - 1U;
-  size_t selected = 0;
+static void select_best_cap(const knapsack_workspace_t *workspace, int *best_cap_out) {
+  size_t best_cap = 0U;
+  int best_val = workspace->prev_value[0];
+  size_t best_weight = workspace->prev_weight[0];
+
+  for (size_t cap = 1U; cap < workspace->width; ++cap) {
+    const int val = workspace->prev_value[cap];
+    const size_t weight_at_cap = workspace->prev_weight[cap];
+    if (val > best_val || (val == best_val && weight_at_cap < best_weight)) {
+      best_val = val;
+      best_weight = weight_at_cap;
+      best_cap = cap;
+    }
+  }
+  *best_cap_out = (int)best_cap;
+}
+
+static int compare_size_t(const void *lhs, const void *rhs) {
+  const size_t lhs_value = *(const size_t *)lhs;
+  const size_t rhs_value = *(const size_t *)rhs;
+  return (lhs_value > rhs_value) - (lhs_value < rhs_value);
+}
+
+// NOLINTBEGIN(bugprone-easily-swappable-parameters)
+static bool reconstruct_solution(const knapsack_workspace_t *workspace,
+                                 const knapsack_item_t *items, size_t count, int best_cap,
+                                 knapsack_result_t *out_result) {
+  size_t cap = (size_t)best_cap;
+  size_t selected = 0U;
+
   for (size_t i = count; i-- > 0;) {
     const size_t idx = i * workspace->width + cap;
     if (workspace->take[idx]) {
@@ -166,27 +185,33 @@ static bool reconstruct_solution(const knapsack_item_t *items, size_t count,
   }
 
   if (selected == 0U) {
+    out_result->optimal_value = workspace->prev_value[best_cap];
     return true;
   }
 
-  out_result->selected_indices = (size_t *)malloc(selected * sizeof(size_t));
-  if (!out_result->selected_indices) {
-    reset_result(out_result);
+  size_t *indices = (size_t *)malloc(selected * sizeof(size_t));
+  if (!indices) {
     return false;
   }
 
   size_t write = selected;
-  cap = workspace->width - 1U;
+  cap = best_cap;
   for (size_t i = count; i-- > 0;) {
     const size_t idx = i * workspace->width + cap;
     if (workspace->take[idx]) {
-      out_result->selected_indices[--write] = i;
+      indices[--write] = i;
       cap -= (size_t)items[i].weight;
     }
   }
+
+  qsort(indices, selected, sizeof(size_t), compare_size_t);
+
+  out_result->optimal_value = workspace->prev_value[best_cap];
+  out_result->selected_indices = indices;
   out_result->selected_count = selected;
   return true;
 }
+// NOLINTEND(bugprone-easily-swappable-parameters)
 
 void knapsack_result_free(knapsack_result_t *result) {
   if (!result) {
@@ -201,35 +226,60 @@ void knapsack_result_free(knapsack_result_t *result) {
 // NOLINTBEGIN(bugprone-easily-swappable-parameters)
 bool knapsack_solve(const knapsack_item_t *items, size_t count, int capacity,
                     knapsack_result_t *out_result) {
+  knapsack_status_t status = knapsack_solve_status(items, count, capacity, out_result);
+  return status == KNAPSACK_OK;
+}
+// NOLINTEND(bugprone-easily-swappable-parameters)
+
+knapsack_status_t knapsack_solve_status(const knapsack_item_t *items, size_t count, int capacity,
+                                        knapsack_result_t *out_result) {
   if (!out_result) {
-    return false;
+    return KNAPSACK_ERR_NULL_RESULT;
   }
   reset_result(out_result);
 
-  if (!validate_items(items, count)) {
-    return false;
+  const knapsack_status_t input_status = validate_inputs(items, count, capacity);
+  if (input_status != KNAPSACK_OK) {
+    return input_status;
   }
-  if (!validate_capacity(capacity)) {
-    return false;
-  }
+
   const size_t width = (size_t)capacity + 1U;
-  size_t take_size = 0U;
-  if (!validate_dimensions(count, width, &take_size)) {
-    return false;
+  if (count != 0U && width > SIZE_MAX / count) {
+    return KNAPSACK_ERR_DIMENSION_OVERFLOW;
   }
+  const size_t take_size = width * count;
+  if (take_size == 0U) {
+    return KNAPSACK_ERR_DIMENSION_OVERFLOW;
+  }
+  knapsack_workspace_t workspace = {.width = width,
+                                    .take_size = take_size,
+                                    .prev_value = NULL,
+                                    .curr_value = NULL,
+                                    .prev_weight = NULL,
+                                    .curr_weight = NULL,
+                                    .take = NULL};
 
-  knapsack_workspace_t workspace = {
-      .width = width, .take_size = take_size, .prev = NULL, .curr = NULL, .take = NULL};
   if (!allocate_workspace(&workspace)) {
-    return false;
+    return KNAPSACK_ERR_ALLOC;
   }
 
-  int *last_row = NULL;
-  const bool dp_ok = run_dp(items, count, &workspace, &last_row);
-  const bool rebuild_ok = dp_ok && last_row != NULL &&
-                          reconstruct_solution(items, count, &workspace, last_row, out_result);
+  knapsack_status_t status = KNAPSACK_OK;
+  const bool dp_ok = run_dp(items, count, &workspace);
+  if (!dp_ok) {
+    status = KNAPSACK_ERR_INT_OVERFLOW;
+  }
+
+  int best_cap = 0;
+  if (status == KNAPSACK_OK) {
+    select_best_cap(&workspace, &best_cap);
+  }
+
+  const bool rebuild_ok = (status == KNAPSACK_OK) &&
+                          reconstruct_solution(&workspace, items, count, best_cap, out_result);
+  if (!rebuild_ok && status == KNAPSACK_OK) {
+    status = KNAPSACK_ERR_ALLOC;
+  }
 
   free_workspace(&workspace);
-  return dp_ok && rebuild_ok;
+  return status;
 }
-// NOLINTEND(bugprone-easily-swappable-parameters)

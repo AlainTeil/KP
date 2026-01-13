@@ -39,6 +39,18 @@ TEST(KnapsackSolverTest, RejectsNegativeWeight) {
   EXPECT_FALSE(knapsack_solve(items, 1U, 10, &result));
 }
 
+TEST(KnapsackSolverTest, RejectsZeroWeight) {
+  knapsack_item_t items[] = {{0, 5}};
+  knapsack_result_t result;
+  EXPECT_FALSE(knapsack_solve(items, 1U, 10, &result));
+}
+
+TEST(KnapsackSolverTest, RejectsNegativeValue) {
+  knapsack_item_t items[] = {{1, -5}};
+  knapsack_result_t result;
+  EXPECT_FALSE(knapsack_solve(items, 1U, 10, &result));
+}
+
 TEST(KnapsackSolverTest, HandlesZeroCapacity) {
   knapsack_item_t items[] = {{1, 5}, {2, 10}};
   knapsack_result_t result;
@@ -55,6 +67,12 @@ TEST(KnapsackSolverTest, RejectsNullResultPointer) {
   EXPECT_FALSE(knapsack_solve(&item, 1U, 1, NULL));
 }
 
+TEST(KnapsackSolverTest, StatusReportsNullResultPointer) {
+  knapsack_item_t item = {1, 1};
+  knapsack_status_t status = knapsack_solve_status(&item, 1U, 1, NULL);
+  EXPECT_EQ(status, KNAPSACK_ERR_NULL_RESULT);
+}
+
 TEST(KnapsackSolverTest, RejectsNullItems) {
   knapsack_result_t result;
   EXPECT_FALSE(knapsack_solve(NULL, 1U, 1, &result));
@@ -64,6 +82,13 @@ TEST(KnapsackSolverTest, RejectsZeroItems) {
   knapsack_item_t dummy = {1, 1};
   knapsack_result_t result;
   EXPECT_FALSE(knapsack_solve(&dummy, 0U, 10, &result));
+}
+
+TEST(KnapsackSolverTest, StatusRejectsInvalidItems) {
+  knapsack_item_t items[] = {{0, 5}};
+  knapsack_result_t result;
+  knapsack_status_t status = knapsack_solve_status(items, 1U, 10, &result);
+  EXPECT_EQ(status, KNAPSACK_ERR_INVALID_ITEMS);
 }
 
 TEST(KnapsackSolverTest, SingleItemExactFit) {
@@ -83,6 +108,17 @@ TEST(KnapsackSolverTest, HandlesAllItemsTooHeavy) {
   knapsack_result_t result;
   ASSERT_TRUE(knapsack_solve(items, 2U, 2, &result));
 
+  EXPECT_EQ(result.optimal_value, 0);
+  EXPECT_EQ(result.selected_count, 0U);
+
+  knapsack_result_free(&result);
+}
+
+TEST(KnapsackSolverTest, ZeroCapacityReturnsEmptySelection) {
+  knapsack_item_t items[] = {{1, 5}, {2, 6}};
+  knapsack_result_t result;
+
+  ASSERT_TRUE(knapsack_solve(items, 2U, 0, &result));
   EXPECT_EQ(result.optimal_value, 0);
   EXPECT_EQ(result.selected_count, 0U);
 
@@ -117,6 +153,40 @@ TEST(KnapsackSolverTest, HandlesLargeCapacityWithSmallItemSet) {
   knapsack_result_free(&result);
 }
 
+TEST(KnapsackSolverTest, RejectsCapacityAboveLimit) {
+  knapsack_item_t items[] = {{1, 1}};
+  knapsack_result_t result;
+  EXPECT_FALSE(knapsack_solve(items, 1U, 100001, &result));
+}
+
+TEST(KnapsackSolverTest, RejectsItemCountAboveLimit) {
+  std::vector<knapsack_item_t> items(101, {1, 1});
+  knapsack_result_t result;
+  EXPECT_FALSE(knapsack_solve(items.data(), items.size(), 10, &result));
+}
+
+TEST(KnapsackSolverTest, AcceptsMaximumLimits) {
+  std::vector<knapsack_item_t> items(100, {1, 1});
+  knapsack_result_t result;
+
+  ASSERT_TRUE(knapsack_solve(items.data(), items.size(), 100000, &result));
+
+  EXPECT_EQ(result.optimal_value, 100);
+  ASSERT_EQ(result.selected_count, items.size());
+  for (size_t i = 0; i < items.size(); ++i) {
+    EXPECT_EQ(result.selected_indices[i], i);
+  }
+
+  knapsack_result_free(&result);
+}
+
+TEST(KnapsackSolverTest, StatusRejectsCapacityTooLarge) {
+  knapsack_item_t items[] = {{1, 1}};
+  knapsack_result_t result;
+  knapsack_status_t status = knapsack_solve_status(items, 1U, 200000, &result);
+  EXPECT_EQ(status, KNAPSACK_ERR_INVALID_CAPACITY);
+}
+
 TEST(KnapsackSolverTest, RejectsCapacityOverflow) {
   if (SIZE_MAX > UINT32_MAX) {
     GTEST_SKIP() << "Overflow guard only triggers on 32-bit size_t";
@@ -137,27 +207,10 @@ TEST(KnapsackSolverTest, RejectsValueOverflow) {
   EXPECT_FALSE(knapsack_solve(items, 2U, 2, &result));
 }
 
-TEST(KnapsackSolverTest, HandlesNegativeValuesWithoutSelecting) {
-  knapsack_item_t items[] = {{1, INT_MIN}, {1, -1}};
-  knapsack_result_t result;
-
-  ASSERT_TRUE(knapsack_solve(items, 2U, 2, &result));
-  EXPECT_EQ(result.optimal_value, 0);
-  EXPECT_EQ(result.selected_count, 0U);
-
-  knapsack_result_free(&result);
-}
-
-TEST(KnapsackSolverTest, ZeroWeightPositiveValueSelectedAtZeroCapacity) {
+TEST(KnapsackSolverTest, ZeroWeightItemsAreRejected) {
   knapsack_item_t items[] = {{0, 7}};
   knapsack_result_t result;
-  ASSERT_TRUE(knapsack_solve(items, 1U, 0, &result));
-
-  EXPECT_EQ(result.optimal_value, 7);
-  ASSERT_EQ(result.selected_count, 1U);
-  EXPECT_EQ(result.selected_indices[0], 0U);
-
-  knapsack_result_free(&result);
+  EXPECT_FALSE(knapsack_solve(items, 1U, 0, &result));
 }
 
 TEST(KnapsackSolverTest, PicksBestCombinationNotGreedy) {
@@ -170,6 +223,34 @@ TEST(KnapsackSolverTest, PicksBestCombinationNotGreedy) {
   EXPECT_THAT(
       std::vector<size_t>(result.selected_indices, result.selected_indices + result.selected_count),
       ElementsAre(2U, 3U));
+
+  knapsack_result_free(&result);
+}
+
+TEST(KnapsackSolverTest, TieBreaksBySmallerTotalWeight) {
+  knapsack_item_t items[] = {{3, 10}, {4, 10}}; // same value, different weights
+  knapsack_result_t result;
+
+  ASSERT_TRUE(knapsack_solve(items, 2U, 4, &result));
+
+  EXPECT_EQ(result.optimal_value, 10);
+  ASSERT_EQ(result.selected_count, 1U);
+  EXPECT_EQ(result.selected_indices[0], 0U); // weight 3 chosen over weight 4
+
+  knapsack_result_free(&result);
+}
+
+TEST(KnapsackSolverTest, SelectionIndicesAreAscending) {
+  knapsack_item_t items[] = {{2, 2}, {1, 2}, {3, 3}};
+  knapsack_result_t result;
+
+  ASSERT_TRUE(knapsack_solve(items, 3U, 3, &result));
+
+  EXPECT_EQ(result.optimal_value, 4);
+  ASSERT_EQ(result.selected_count, 2U);
+  EXPECT_THAT(std::vector<size_t>(result.selected_indices,
+                                  result.selected_indices + result.selected_count),
+              ElementsAre(0U, 1U));
 
   knapsack_result_free(&result);
 }
@@ -198,8 +279,8 @@ static int brute_force_optimal(const std::vector<knapsack_item_t> &items, int ca
 TEST(KnapsackSolverTest, FuzzMatchesBruteForceForSmallInstances) {
   std::mt19937 rng(12345);
   std::uniform_int_distribution<int> count_dist(1, 6);
-  std::uniform_int_distribution<int> weight_dist(0, 5);
-  std::uniform_int_distribution<int> value_dist(-5, 10);
+  std::uniform_int_distribution<int> weight_dist(1, 5);
+  std::uniform_int_distribution<int> value_dist(0, 10);
   std::uniform_int_distribution<int> capacity_dist(0, 12);
 
   for (int trial = 0; trial < 200; ++trial) {

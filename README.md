@@ -2,7 +2,24 @@
 
 Simple C17 library for solving the 0/1 knapsack problem with a demo CLI and GTest/GMock tests.
 
-Complexity: `knapsack_solve` uses the standard DP table, O(items * capacity) time and space; extremely large capacities that would overflow internal buffers are rejected.
+Constraints and behavior:
+- Items: count <= 100; each weight > 0; each value >= 0; negative values and zero weights are rejected.
+- Capacity: 0 <= W <= 100000; extremely large capacities that would overflow internal buffers are rejected.
+- Optimality: exact DP with tie-break on smallest total weight; selected indices are reported in ascending order.
+- Complexity: O(items * capacity) time, O(items * capacity) space (bounded by the limits above).
+- API: legacy `knapsack_solve` returns bool; `knapsack_solve_status` returns a specific `knapsack_status_t`
+	(e.g., INVALID_ITEMS, INVALID_CAPACITY, DIMENSION_OVERFLOW, INT_OVERFLOW, ALLOC). `knapsack_result_free`
+	still frees internal allocations.
+
+Strengths:
+- Exact optimal solutions with deterministic tie-break on minimal total weight; stable ascending indices.
+- Clear input validation (rejects zero/negative weights, negative values, oversized n/W, and overflows).
+- Small, dependency-light C17 core with straightforward CLI and tests; easy to embed.
+
+Weaknesses:
+- DP space is O(n * W); with W up to 100000 and n up to 100, memory is bounded but not suited for much larger capacities.
+- Runtime scales linearly with W; very large capacities are slow compared to heuristic/approximate schemes.
+- Single-threaded; no built-in parallelization or SIMD tuning.
 
 ## Build
 
@@ -34,6 +51,17 @@ Run:
 ```bash
 ./build/knapsack_demo data/sample.txt
 ```
+
+JSON mode:
+
+```bash
+./build/knapsack_demo --json data/sample.txt
+```
+
+Success emits `{"status":"ok","optimal_value":...,"selected_indices":[...]}`.
+Errors emit JSON with `status:"error"` and `code`, otherwise human-readable text.
+
+CLI enforces the same limits as the library (count<=100, capacity<=100000, weights>0, values>=0).
 
 Malformed inputs: a capacity line with trailing tokens or non-numeric data is rejected with
 "Failed to parse capacity"; malformed item tokens (missing colon/overflow) emit
