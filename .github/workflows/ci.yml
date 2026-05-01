@@ -22,7 +22,7 @@ jobs:
             cc: clang-18
             cxx: clang++-18
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install toolchain
         run: |
           sudo apt-get update
@@ -41,7 +41,7 @@ jobs:
     name: clang ASan+UBSan
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install toolchain
         run: sudo apt-get update && sudo apt-get install -y clang-18 cmake ninja-build
       - name: Configure
@@ -55,7 +55,7 @@ jobs:
   clang-format:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y clang-format-18 cmake ninja-build
       - name: Check formatting
         run: |
@@ -66,7 +66,7 @@ jobs:
   clang-tidy:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y clang-18 clang-tidy-18 cmake ninja-build
       - name: Configure
         env: { CC: clang-18, CXX: clang++-18 }
@@ -79,7 +79,7 @@ jobs:
   cppcheck:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y cppcheck
       - name: Run cppcheck
         run: |
@@ -90,7 +90,7 @@ jobs:
   coverage:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: sudo apt-get update && sudo apt-get install -y gcc-13 g++-13 cmake ninja-build python3-pip
       - run: pipx install gcovr || pip install --break-system-packages gcovr
       - name: Configure
@@ -104,7 +104,7 @@ jobs:
         run: |
           gcovr -r . --filter src/ build-cov --txt --xml-pretty -o coverage.xml \
             --print-summary
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: coverage-report
           path: coverage.xml
@@ -113,7 +113,7 @@ jobs:
     name: libFuzzer smoke (60s)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install toolchain
         run: sudo apt-get update && sudo apt-get install -y clang-18 cmake ninja-build
       - name: Configure
@@ -131,7 +131,7 @@ jobs:
             build-fuzz/fuzz/corpus
       - name: Upload crash artefacts (on failure)
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: fuzz-crashes
           path: fuzz-artifacts/
