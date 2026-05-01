@@ -102,8 +102,9 @@ jobs:
         run: ctest --preset coverage
       - name: Generate report
         run: |
-          gcovr -r . --filter src/ build-cov --txt --xml-pretty -o coverage.xml \
-            --print-summary
+          gcovr -r . --filter src/ build-cov --txt=coverage.txt \
+            --xml=coverage.xml --xml-pretty --print-summary
+          cat coverage.txt
       - uses: actions/upload-artifact@v5
         with:
           name: coverage-report
