@@ -1,0 +1,44 @@
+# Run with: pre-commit install && pre-commit run --all-files
+# See https://pre-commit.com for hook docs.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/pre-commit/mirrors-clang-format
+    rev: v18.1.3
+    hooks:
+      - id: clang-format
+        files: \.(c|h|cpp|hpp)$
+        exclude: ^(docs/|build|_deps/)
+
+  - repo: local
+    hooks:
+      - id: cppcheck
+        name: cppcheck
+        language: system
+        entry: cppcheck
+        args:
+          - --enable=warning,style,performance,portability
+          - --error-exitcode=1
+          - --suppress=missingIncludeSystem
+          - --inline-suppr
+          - -Iinclude
+          - --quiet
+        files: ^(src|include)/.*\.(c|h)$
+
+      - id: cmake-format-check
+        name: cmake formatting (informational)
+        language: system
+        entry: bash -c
+        args:
+          - 'command -v cmake-format >/dev/null && cmake-format --check "$@" || true'
+          - --
+        files: (CMakeLists\.txt|\.cmake)$

@@ -1,6 +1,6 @@
 PROJECT_NAME           = "KnapsackC"
 OUTPUT_DIRECTORY       = docs/build
-INPUT                  = include src README.md
+INPUT                  = include src src/cli README.md
 USE_MDFILE_AS_MAINPAGE = README.md
 RECURSIVE              = YES
 GENERATE_LATEX         = NO

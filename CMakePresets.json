@@ -1,0 +1,105 @@
+{
+  "version": 4,
+  "cmakeMinimumRequired": { "major": 3, "minor": 23, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default Release",
+      "description": "Release build with -Werror; tests on, tooling off.",
+      "binaryDir": "${sourceDir}/build",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "WARNINGS_AS_ERRORS": "ON",
+        "ENABLE_CLANG_TIDY": "OFF",
+        "ENABLE_DOXYGEN": "OFF"
+      }
+    },
+    {
+      "name": "strict",
+      "inherits": "default",
+      "displayName": "Strict (RelWithDebInfo + -Werror)",
+      "binaryDir": "${sourceDir}/build-strict",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "tidy",
+      "inherits": "default",
+      "displayName": "clang-tidy",
+      "binaryDir": "${sourceDir}/build-tidy",
+      "cacheVariables": { "ENABLE_CLANG_TIDY": "ON" }
+    },
+    {
+      "name": "asan",
+      "displayName": "Debug + ASan+UBSan",
+      "binaryDir": "${sourceDir}/build-asan",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_SANITIZERS": "ON",
+        "ENABLE_CLANG_TIDY": "OFF",
+        "ENABLE_DOXYGEN": "OFF"
+      }
+    },
+    {
+      "name": "coverage",
+      "displayName": "Debug + lcov coverage",
+      "binaryDir": "${sourceDir}/build-cov",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ENABLE_COVERAGE": "ON",
+        "ENABLE_CLANG_TIDY": "OFF",
+        "ENABLE_DOXYGEN": "OFF"
+      }
+    },
+    {
+      "name": "bench",
+      "displayName": "Release + benchmarks",
+      "binaryDir": "${sourceDir}/build-bench",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BUILD_BENCHMARKS": "ON",
+        "BUILD_TESTING": "OFF",
+        "ENABLE_CLANG_TIDY": "OFF",
+        "ENABLE_DOXYGEN": "OFF"
+      }
+    },
+    {
+      "name": "fuzz",
+      "displayName": "Clang + libFuzzer",
+      "binaryDir": "${sourceDir}/build-fuzz",
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ENABLE_FUZZING": "ON",
+        "BUILD_TESTING": "OFF",
+        "ENABLE_CLANG_TIDY": "OFF",
+        "ENABLE_DOXYGEN": "OFF"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "default",  "configurePreset": "default" },
+    { "name": "strict",   "configurePreset": "strict" },
+    { "name": "tidy",     "configurePreset": "tidy" },
+    { "name": "asan",     "configurePreset": "asan" },
+    { "name": "coverage", "configurePreset": "coverage" },
+    { "name": "bench",    "configurePreset": "bench" },
+    { "name": "fuzz",     "configurePreset": "fuzz", "targets": ["fuzz_parse"] }
+  ],
+  "testPresets": [
+    {
+      "name": "default",
+      "configurePreset": "default",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    },
+    { "name": "strict",   "inherits": "default", "configurePreset": "strict" },
+    { "name": "tidy",     "inherits": "default", "configurePreset": "tidy" },
+    { "name": "asan",     "inherits": "default", "configurePreset": "asan" },
+    { "name": "coverage", "inherits": "default", "configurePreset": "coverage" }
+  ]
+}

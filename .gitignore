@@ -1,9 +1,30 @@
 # Build artifacts
-/build/
+build*/
 /CMakeFiles/
 /CMakeCache.txt
 /cmake_install.cmake
 /Makefile
+compile_commands.json
+
+# Local CMake preset overrides (per CMake convention these are user-specific)
+CMakeUserPresets.json
+
+# Coverage
+*.gcda
+*.gcno
+*.gcov
+coverage/
+*.info
+coverage.xml
+cov.*
+*.html-cov/
+
+# Fuzzing artifacts (libFuzzer crash inputs / dynamic corpora live next to
+# the built binary; the seed corpus under fuzz/corpus/ is checked in).
+crash-*
+leak-*
+timeout-*
+oom-*
 
 # Generated docs
 /docs/
@@ -11,6 +32,7 @@
 # IDE/editor
 .vscode/
 .idea/
+.cache/
 *.swp
 *~
 

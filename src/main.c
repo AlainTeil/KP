@@ -1,311 +1,118 @@
-#define POSIX_C_SOURCE 200809L
+#define _POSIX_C_SOURCE 200809L
 
+#include "cli/cli_internal.h"
 #include "knapsack/knapsack.h"
 
-#include <errno.h>
-#include <limits.h>
 #include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-static const size_t CAP_LINE_MAX = 256U;
-static const size_t ITEM_LINE_MAX = 8192U;
-static const size_t INITIAL_ITEM_CAP = 16U;
-static const int DECIMAL_BASE = 10;
-static const size_t USAGE_BUF_SIZE = 128U;
-static const int CLI_MAX_CAPACITY = 100000;
-static const size_t CLI_MAX_ITEMS = 100U;
-static const char *JSON_FLAG = "--json";
-
-#if CAP_LINE_MAX > INT_MAX
-#error CAP_LINE_MAX must fit in int
-#endif
-#if ITEM_LINE_MAX > INT_MAX
-#error ITEM_LINE_MAX must fit in int
-#endif
-
-static bool has_only_trailing_space(const char *cursor) {
-  while (*cursor != '\0') {
-    if (*cursor != ' ' && *cursor != '\t' && *cursor != '\r' && *cursor != '\n') {
-      return false;
-    }
-    ++cursor;
-  }
-  return true;
+static void print_usage(FILE *stream, const char *prog) {
+  fprintf(stream,
+          "Usage: %s [--json] <input_file>\n"
+          "       %s --help | -h\n"
+          "       %s --version\n"
+          "\n"
+          "Options:\n"
+          "  --json       Emit machine-readable JSON output.\n"
+          "  -h, --help   Show this help message and exit.\n"
+          "  --version    Print version and exit.\n"
+          "\n"
+          "Input file format:\n"
+          "  line 1: capacity (integer >= 0)\n"
+          "  line 2: whitespace/comma-separated weight:value pairs\n",
+          prog, prog, prog);
 }
 
-static int read_line_into(char *buffer, size_t buffer_size, FILE *file) {
-  if (!buffer || buffer_size == 0U || !file) {
-    return -1;
-  }
-  if (!fgets(buffer, (int)buffer_size, file)) {
-    return -1;
-  }
-  if (strchr(buffer, '\n') == NULL && !feof(file)) {
-    return -1; /* line too long */
-  }
-  return 0;
+static void print_version(void) {
+  printf("knapsack_demo %d.%d.%d\n", KNAPSACK_VERSION_MAJOR, KNAPSACK_VERSION_MINOR,
+         KNAPSACK_VERSION_PATCH);
 }
 
-static int parse_capacity(FILE *file, int *capacity) {
-  char line[CAP_LINE_MAX];
-  if (read_line_into(line, sizeof line, file) != 0) {
-    return -1;
+static void emit_error(bool json_mode, const char *message, knapsack_status_t status) {
+  if (json_mode) {
+    cli_print_error_json(stdout, message, status);
+  } else {
+    cli_print_error_text(stderr, message);
   }
-
-  char *endptr = NULL;
-  errno = 0;
-  long cap = strtol(line, &endptr, DECIMAL_BASE);
-  if (errno != 0 || endptr == line || cap < 0 || cap > INT_MAX) {
-    return -1;
-  }
-  if (!has_only_trailing_space(endptr)) {
-    return -1;
-  }
-  *capacity = (int)cap;
-  return 0;
-}
-
-static bool parse_item_token(char *token, int *weight_out, int *value_out) {
-  if (!token || !weight_out || !value_out) {
-    return false;
-  }
-  char *colon = strchr(token, ':');
-  if (!colon || colon == token || colon[1] == '\0') {
-    return false;
-  }
-  *colon = '\0';
-  char *weight_str = token;
-  char *value_str = colon + 1;
-
-  errno = 0;
-  char *endptr = NULL;
-  long weight_val = strtol(weight_str, &endptr, DECIMAL_BASE);
-  if (errno != 0 || endptr == weight_str || *endptr != '\0' || weight_val <= 0 ||
-      weight_val > INT_MAX) {
-    return false;
-  }
-
-  errno = 0;
-  endptr = NULL;
-  long value_val = strtol(value_str, &endptr, DECIMAL_BASE);
-  if (errno != 0 || endptr == value_str || *endptr != '\0' || value_val < 0 ||
-      value_val > INT_MAX) {
-    return false;
-  }
-
-  *weight_out = (int)weight_val;
-  *value_out = (int)value_val;
-  return true;
-}
-
-static bool ensure_item_capacity(knapsack_item_t **items, size_t *capacity, size_t count) {
-  if (!items || !capacity) {
-    return false;
-  }
-  if (count < *capacity) {
-    return true;
-  }
-  if (*capacity > SIZE_MAX / 2U) {
-    return false;
-  }
-  size_t new_capacity = *capacity * 2U;
-  if (new_capacity > SIZE_MAX / sizeof(knapsack_item_t)) {
-    return false;
-  }
-  knapsack_item_t *tmp = (knapsack_item_t *)realloc(*items, new_capacity * sizeof(knapsack_item_t));
-  if (!tmp) {
-    return false;
-  }
-  *items = tmp;
-  *capacity = new_capacity;
-  return true;
-}
-
-static int parse_items(FILE *file, knapsack_item_t **items_out, size_t *count_out) {
-  char line[ITEM_LINE_MAX];
-  if (read_line_into(line, sizeof line, file) != 0) {
-    return -1;
-  }
-
-  size_t capacity = INITIAL_ITEM_CAP;
-  size_t count = 0U;
-  knapsack_item_t *items = (knapsack_item_t *)malloc(capacity * sizeof(knapsack_item_t));
-  if (!items) {
-    return -1;
-  }
-
-  const char *delims = " ,\t\r\n";
-  bool parse_ok = true;
-  for (char *token = strtok(line, delims); token != NULL; token = strtok(NULL, delims)) {
-    int weight = 0;
-    int value = 0;
-    if (!parse_item_token(token, &weight, &value)) {
-      parse_ok = false;
-      break;
-    }
-    if (!ensure_item_capacity(&items, &capacity, count)) {
-      parse_ok = false;
-      break;
-    }
-    items[count].weight = weight;
-    items[count].value = value;
-    ++count;
-  }
-
-  if (!parse_ok || count == 0U) {
-    free(items);
-    return -1;
-  }
-
-  *items_out = items;
-  *count_out = count;
-  return 0;
-}
-
-static bool enforce_cli_limits(int capacity, size_t count) {
-  if (capacity > CLI_MAX_CAPACITY || count > CLI_MAX_ITEMS) {
-    return false;
-  }
-
-  return true;
-}
-
-static const char *status_to_string(knapsack_status_t status) {
-  switch (status) {
-  case KNAPSACK_OK:
-    return "OK";
-  case KNAPSACK_ERR_NULL_RESULT:
-    return "NULL_RESULT";
-  case KNAPSACK_ERR_INVALID_ITEMS:
-    return "INVALID_ITEMS";
-  case KNAPSACK_ERR_TOO_MANY_ITEMS:
-    return "TOO_MANY_ITEMS";
-  case KNAPSACK_ERR_INVALID_CAPACITY:
-    return "INVALID_CAPACITY";
-  case KNAPSACK_ERR_DIMENSION_OVERFLOW:
-    return "DIMENSION_OVERFLOW";
-  case KNAPSACK_ERR_INT_OVERFLOW:
-    return "INT_OVERFLOW";
-  case KNAPSACK_ERR_ALLOC:
-    return "ALLOC";
-  default:
-    return "UNKNOWN";
-  }
-}
-
-static void print_result_json(const knapsack_result_t *result) {
-  fputs("{\"status\":\"ok\",\"optimal_value\":", stdout);
-  printf("%d", result->optimal_value);
-  fputs(",\"selected_indices\":[", stdout);
-  for (size_t i = 0; i < result->selected_count; ++i) {
-    if (i > 0U) {
-      fputc(',', stdout);
-    }
-    printf("%zu", result->selected_indices[i]);
-  }
-  fputs("]}\n", stdout);
-}
-
-static void print_error_json(const char *message, knapsack_status_t status) {
-  const char *status_str = status_to_string(status);
-  fputs("{\"status\":\"error\",\"code\":\"", stdout);
-  fputs(status_str, stdout);
-  fputs("\",\"message\":\"", stdout);
-  fputs(message ? message : "", stdout);
-  fputs("\"}\n", stdout);
-}
-
-static void print_result(const knapsack_result_t *result) {
-  printf("Optimal value: %d\n", result->optimal_value);
-  printf("Selected indices (%zu):", result->selected_count);
-  for (size_t i = 0; i < result->selected_count; ++i) {
-    printf(" %zu", result->selected_indices[i]);
-  }
-  printf("\n");
 }
 
 int main(int argc, char **argv) {
   bool json_mode = false;
   const char *path = NULL;
+  const char *prog = (argc > 0 && argv[0]) ? argv[0] : "knapsack_demo";
 
-  if (argc == 3 && strcmp(argv[1], JSON_FLAG) == 0) {
-    json_mode = true;
-    path = argv[2];
-  } else if (argc == 2) {
-    path = argv[1];
-  } else {
-    fputs("Usage: ", stderr);
-    fputs(argv[0], stderr);
-    fputs(" [--json] <input_file>\n", stderr);
+  for (int i = 1; i < argc; ++i) {
+    const char *arg = argv[i];
+    if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+      print_usage(stdout, prog);
+      return EXIT_SUCCESS;
+    }
+    if (strcmp(arg, "--version") == 0) {
+      print_version();
+      return EXIT_SUCCESS;
+    }
+    if (strcmp(arg, "--json") == 0) {
+      json_mode = true;
+      continue;
+    }
+    if (arg[0] == '-' && arg[1] != '\0') {
+      fprintf(stderr, "Unknown option: %s\n", arg);
+      print_usage(stderr, prog);
+      return EXIT_FAILURE;
+    }
+    if (path != NULL) {
+      fprintf(stderr, "Unexpected extra argument: %s\n", arg);
+      print_usage(stderr, prog);
+      return EXIT_FAILURE;
+    }
+    path = arg;
+  }
+
+  if (!path) {
+    print_usage(stderr, prog);
     return EXIT_FAILURE;
   }
+
   FILE *file = fopen(path, "r");
   if (!file) {
-    perror("Failed to open input file");
+    if (json_mode) {
+      cli_print_error_json(stdout, "Failed to open input file", KNAPSACK_ERR_INVALID_ITEMS);
+    } else {
+      perror("Failed to open input file");
+    }
     return EXIT_FAILURE;
   }
 
   int capacity = 0;
-  if (parse_capacity(file, &capacity) != 0) {
-    const char *msg = "Failed to parse capacity";
-    if (json_mode) {
-      print_error_json(msg, KNAPSACK_ERR_INVALID_CAPACITY);
-    } else {
-      fputs(msg, stderr);
-      fputc('\n', stderr);
-    }
+  if (cli_parse_capacity(file, &capacity) != 0) {
+    emit_error(json_mode, "Failed to parse capacity", KNAPSACK_ERR_INVALID_CAPACITY);
     fclose(file);
     return EXIT_FAILURE;
   }
 
   knapsack_item_t *items = NULL;
   size_t count = 0;
-  if (parse_items(file, &items, &count) != 0) {
-    const char *msg = "Failed to parse items";
-    if (json_mode) {
-      print_error_json(msg, KNAPSACK_ERR_INVALID_ITEMS);
-    } else {
-      fputs(msg, stderr);
-      fputc('\n', stderr);
-    }
+  if (cli_parse_items(file, &items, &count) != 0) {
+    emit_error(json_mode, "Failed to parse items", KNAPSACK_ERR_INVALID_ITEMS);
     fclose(file);
     return EXIT_FAILURE;
   }
   fclose(file);
 
-  if (!enforce_cli_limits(capacity, count)) {
-    const char *msg = "Inputs exceed supported limits (n<=100, W<=100000)";
-    if (json_mode) {
-      print_error_json(msg, KNAPSACK_ERR_INVALID_CAPACITY);
-    } else {
-      fputs(msg, stderr);
-      fputc('\n', stderr);
-    }
-    free(items);
-    return EXIT_FAILURE;
-  }
-
   knapsack_result_t result;
   const knapsack_status_t status = knapsack_solve_status(items, count, capacity, &result);
   if (status != KNAPSACK_OK) {
-    const char *msg = "Knapsack solve failed";
-    if (json_mode) {
-      print_error_json(msg, status);
-    } else {
-      fputs(msg, stderr);
-      fputc('\n', stderr);
-    }
+    emit_error(json_mode, "Knapsack solve failed", status);
     free(items);
     return EXIT_FAILURE;
   }
 
   if (json_mode) {
-    print_result_json(&result);
+    cli_print_result_json(&result);
   } else {
-    print_result(&result);
+    cli_print_result_text(&result);
   }
 
   knapsack_result_free(&result);
